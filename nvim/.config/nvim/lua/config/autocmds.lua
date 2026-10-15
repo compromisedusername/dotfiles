@@ -1,7 +1,7 @@
 local augroup = function(name) return vim.api.nvim_create_augroup("user_" .. name, { clear = true }) end
 local autocmd = vim.api.nvim_create_autocmd
 
--- Typy plików DevOps -----------------------------------------------------------
+-- DevOps filetypes ---------------------------------------------------------------
 local function in_helm_chart(path)
   return vim.fs.root(path, "Chart.yaml") ~= nil
 end
@@ -27,7 +27,7 @@ vim.filetype.add({
     ["compose.yaml"] = "yaml.docker-compose",
   },
   pattern = {
-    -- Helm: szablony wewnątrz katalogu z Chart.yaml
+    -- Helm: templates inside a directory that contains Chart.yaml
     [".*/templates/.*%.ya?ml"] = function(path)
       if in_helm_chart(path) then return "helm" end
     end,
@@ -44,12 +44,12 @@ vim.filetype.add({
   },
 })
 
--- Treesitter: zsh używa parsera basha, warianty yaml - parsera yaml.
+-- Treesitter: zsh uses the bash parser, yaml variants use the yaml parser.
 vim.treesitter.language.register("bash", "zsh")
 vim.treesitter.language.register("yaml", { "yaml.ansible", "yaml.docker-compose" })
 vim.treesitter.language.register("hcl", "terraform-vars")
 
--- Zachowanie -------------------------------------------------------------------
+-- Behaviour ----------------------------------------------------------------------
 autocmd("TextYankPost", {
   group = augroup("highlight_yank"),
   callback = function() vim.hl.on_yank({ timeout = 200 }) end,
@@ -66,7 +66,7 @@ autocmd("FileType", {
   end,
 })
 
--- Wróć do ostatniej pozycji kursora po otwarciu pliku
+-- Restore the last cursor position when opening a file
 autocmd("BufReadPost", {
   group = augroup("last_loc"),
   callback = function(ev)
@@ -78,13 +78,13 @@ autocmd("BufReadPost", {
   end,
 })
 
--- Wyrównaj okna po zmianie rozmiaru terminala
+-- Equalize splits when the terminal is resized
 autocmd("VimResized", {
   group = augroup("resize_splits"),
   callback = function() vim.cmd("tabdo wincmd =") end,
 })
 
--- Zamykaj okna pomocnicze przez q
+-- Close helper windows with q
 autocmd("FileType", {
   group = augroup("close_with_q"),
   pattern = { "help", "qf", "lspinfo", "checkhealth", "man", "notify", "startuptime" },
@@ -94,7 +94,7 @@ autocmd("FileType", {
   end,
 })
 
--- Twórz brakujące katalogi przy zapisie
+-- Create missing parent directories on save
 autocmd("BufWritePre", {
   group = augroup("auto_mkdir"),
   callback = function(ev)
@@ -104,7 +104,7 @@ autocmd("BufWritePre", {
   end,
 })
 
--- Sprawdź, czy plik zmienił się na dysku (np. po edycji przez Claude)
+-- Reload files changed on disk (e.g. edited by Claude)
 autocmd({ "FocusGained", "TermClose", "TermLeave", "BufEnter" }, {
   group = augroup("checktime"),
   callback = function()

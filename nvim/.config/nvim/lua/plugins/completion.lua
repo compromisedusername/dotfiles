@@ -1,12 +1,12 @@
--- Autouzupełnianie (blink.cmp). Fuzzy matcher w czystej Lua - bez
--- pobierania prekompilowanych binarek z internetu.
+-- Completion (blink.cmp). Fuzzy matcher in pure Lua - no prebuilt
+-- binaries downloaded from the internet.
 return {
   "saghen/blink.cmp",
   version = "1.*",
   event = { "InsertEnter", "CmdlineEnter" },
   dependencies = { "rafamadriz/friendly-snippets" },
   opts = {
-    -- <C-space> otwórz, <C-y>/<CR> zatwierdź, <C-n>/<C-p> lub Tab/S-Tab nawigacja
+    -- <C-space> open, <C-y>/<CR> accept, <C-n>/<C-p> or Tab/S-Tab navigate
     keymap = {
       preset = "default",
       ["<CR>"] = { "accept", "fallback" },

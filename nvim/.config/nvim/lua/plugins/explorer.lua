@@ -1,5 +1,5 @@
--- Przeglądarka plików z boku (neo-tree). Ctrl+h / Ctrl+l przełącza fokus
--- między drzewem a edytorem (mapowania w config/keymaps.lua).
+-- Side file explorer (neo-tree). Ctrl+h / Ctrl+l moves focus between the
+-- tree and the editor (mappings in lua/plugins/smart-splits.lua).
 return {
   "nvim-neo-tree/neo-tree.nvim",
   branch = "v3.x",
@@ -8,12 +8,12 @@ return {
     "MunifTanjim/nui.nvim",
     "nvim-tree/nvim-web-devicons",
   },
-  lazy = false, -- przejmuje `nvim .` zamiast netrw
+  lazy = false, -- handles `nvim .` instead of netrw
   keys = {
-    { "<leader>e", "<cmd>Neotree toggle left<cr>", desc = "Przeglądarka plików" },
-    { "<leader>o", "<cmd>Neotree focus left<cr>", desc = "Fokus na przeglądarkę" },
-    { "<leader>ge", "<cmd>Neotree float git_status<cr>", desc = "Git status (drzewo)" },
-    { "<leader>be", "<cmd>Neotree toggle buffers left<cr>", desc = "Bufory (drzewo)" },
+    { "<leader>e", "<cmd>Neotree toggle left<cr>", desc = "File explorer" },
+    { "<leader>o", "<cmd>Neotree focus left<cr>", desc = "Focus file explorer" },
+    { "<leader>ge", "<cmd>Neotree float git_status<cr>", desc = "Git status (tree)" },
+    { "<leader>be", "<cmd>Neotree toggle buffers left<cr>", desc = "Buffers (tree)" },
   },
   opts = {
     close_if_last_window = true,
@@ -24,16 +24,16 @@ return {
       position = "left",
       width = 34,
       mappings = {
-        ["<space>"] = "none", -- leader działa też w drzewie
+        ["<space>"] = "none", -- keep <leader> working inside the tree
         ["l"] = "open",
         ["h"] = "close_node",
         ["Y"] = {
           function(state)
             local path = state.tree:get_node():get_id()
             vim.fn.setreg("+", path)
-            vim.notify("Skopiowano: " .. path)
+            vim.notify("Copied: " .. path)
           end,
-          desc = "Kopiuj ścieżkę do schowka",
+          desc = "Copy path to clipboard",
         },
         ["P"] = { "toggle_preview", config = { use_float = true } },
       },
@@ -44,7 +44,7 @@ return {
       use_libuv_file_watcher = true,
       hijack_netrw_behavior = "open_default",
       filtered_items = {
-        visible = true, -- ukryte pliki widoczne (przyciemnione) - .github, .terraform itd.
+        visible = true, -- hidden files shown dimmed - .github, .terraform etc.
         hide_dotfiles = false,
         hide_gitignored = false,
         never_show = { ".git", ".DS_Store" },

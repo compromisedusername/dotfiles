@@ -17,6 +17,10 @@ return {
         lualine_c = { { "filename", path = 1 }, "diagnostics" },
         lualine_x = {
           {
+            function() return require("kube").statusline() end,
+            color = function() return require("kube").statusline_color() end,
+          },
+          {
             function()
               local names = vim.tbl_map(function(c) return c.name end, vim.lsp.get_clients({ bufnr = 0 }))
               return #names > 0 and (" " .. table.concat(names, ",")) or ""
@@ -35,9 +39,9 @@ return {
     version = "*",
     event = "VeryLazy",
     keys = {
-      { "<leader>bp", "<cmd>BufferLineTogglePin<cr>", desc = "Przypnij bufor" },
-      { "<leader>bl", "<cmd>BufferLineCloseLeft<cr>", desc = "Zamknij bufory po lewej" },
-      { "<leader>br", "<cmd>BufferLineCloseRight<cr>", desc = "Zamknij bufory po prawej" },
+      { "<leader>bp", "<cmd>BufferLineTogglePin<cr>", desc = "Pin buffer" },
+      { "<leader>bl", "<cmd>BufferLineCloseLeft<cr>", desc = "Close buffers to the left" },
+      { "<leader>br", "<cmd>BufferLineCloseRight<cr>", desc = "Close buffers to the right" },
     },
     opts = {
       options = {
@@ -45,7 +49,7 @@ return {
         diagnostics = "nvim_lsp",
         always_show_bufferline = true,
         offsets = {
-          { filetype = "neo-tree", text = "Pliki", highlight = "Directory", text_align = "left" },
+          { filetype = "neo-tree", text = "Files", highlight = "Directory", text_align = "left" },
         },
       },
     },
@@ -57,19 +61,22 @@ return {
       preset = "modern",
       spec = {
         { "<leader>a", group = "AI / Claude" },
-        { "<leader>b", group = "Bufory" },
-        { "<leader>c", group = "Kod" },
-        { "<leader>f", group = "Szukaj" },
+        { "<leader>b", group = "Buffers" },
+        { "<leader>c", group = "Code" },
+        { "<leader>d", group = "Debug" },
+        { "<leader>T", group = "Tests" },
+        { "<leader>f", group = "Find" },
         { "<leader>g", group = "Git" },
-        { "<leader>gh", group = "Hunki" },
-        { "<leader>q", group = "Sesja/wyjście" },
+        { "<leader>gh", group = "Hunks" },
+        { "<leader>k", group = "Kubernetes" },
+        { "<leader>q", group = "Session/quit" },
         { "<leader>t", group = "Terminal" },
-        { "<leader>u", group = "Przełączniki" },
-        { "<leader>x", group = "Diagnostyka/listy" },
+        { "<leader>u", group = "Toggles" },
+        { "<leader>x", group = "Diagnostics/lists" },
       },
     },
     keys = {
-      { "<leader>?", function() require("which-key").show({ global = false }) end, desc = "Skróty bufora" },
+      { "<leader>?", function() require("which-key").show({ global = false }) end, desc = "Buffer keymaps" },
     },
   },
 }

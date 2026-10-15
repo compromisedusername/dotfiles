@@ -1,5 +1,5 @@
 return {
-  -- Znaczniki zmian git przy numerach linii + operacje na hunkach
+  -- Git change signs next to line numbers + hunk operations
   {
     "lewis6991/gitsigns.nvim",
     event = { "BufReadPre", "BufNewFile" },
@@ -7,27 +7,27 @@ return {
       on_attach = function(buf)
         local gs = require("gitsigns")
         local map = function(mode, l, r, desc) vim.keymap.set(mode, l, r, { buffer = buf, desc = desc }) end
-        map("n", "]h", function() gs.nav_hunk("next") end, "Następny hunk")
-        map("n", "[h", function() gs.nav_hunk("prev") end, "Poprzedni hunk")
+        map("n", "]h", function() gs.nav_hunk("next") end, "Next hunk")
+        map("n", "[h", function() gs.nav_hunk("prev") end, "Previous hunk")
         map({ "n", "x" }, "<leader>ghs", ":Gitsigns stage_hunk<cr>", "Stage hunk")
         map({ "n", "x" }, "<leader>ghr", ":Gitsigns reset_hunk<cr>", "Reset hunk")
-        map("n", "<leader>ghS", gs.stage_buffer, "Stage bufor")
-        map("n", "<leader>ghR", gs.reset_buffer, "Reset bufor")
-        map("n", "<leader>ghp", gs.preview_hunk_inline, "Podgląd hunka")
-        map("n", "<leader>ghd", gs.diffthis, "Diff z indeksem")
+        map("n", "<leader>ghS", gs.stage_buffer, "Stage buffer")
+        map("n", "<leader>ghR", gs.reset_buffer, "Reset buffer")
+        map("n", "<leader>ghp", gs.preview_hunk_inline, "Preview hunk")
+        map("n", "<leader>ghd", gs.diffthis, "Diff against index")
       end,
     },
   },
-  -- Lista problemów projektu
+  -- Project-wide problem list
   {
     "folke/trouble.nvim",
     cmd = "Trouble",
     opts = {},
     keys = {
-      { "<leader>xx", "<cmd>Trouble diagnostics toggle<cr>", desc = "Diagnostyka projektu" },
-      { "<leader>xX", "<cmd>Trouble diagnostics toggle filter.buf=0<cr>", desc = "Diagnostyka bufora" },
-      { "<leader>xq", "<cmd>Trouble qflist toggle<cr>", desc = "Quickfix" },
-      { "<leader>xt", "<cmd>Trouble todo toggle<cr>", desc = "TODO w projekcie" },
+      { "<leader>xx", "<cmd>Trouble diagnostics toggle<cr>", desc = "Project diagnostics" },
+      { "<leader>xX", "<cmd>Trouble diagnostics toggle filter.buf=0<cr>", desc = "Buffer diagnostics" },
+      { "<leader>xq", "<cmd>Trouble qflist toggle<cr>", desc = "Quickfix list" },
+      { "<leader>xt", "<cmd>Trouble todo toggle<cr>", desc = "Project TODOs" },
     },
   },
   {
@@ -36,12 +36,12 @@ return {
     dependencies = { "nvim-lua/plenary.nvim" },
     opts = {},
     keys = {
-      { "]t", function() require("todo-comments").jump_next() end, desc = "Następne TODO" },
-      { "[t", function() require("todo-comments").jump_prev() end, desc = "Poprzednie TODO" },
-      { "<leader>ft", function() Snacks.picker.todo_comments() end, desc = "Szukaj TODO" },
+      { "]t", function() require("todo-comments").jump_next() end, desc = "Next TODO" },
+      { "[t", function() require("todo-comments").jump_prev() end, desc = "Previous TODO" },
+      { "<leader>ft", function() Snacks.picker.todo_comments() end, desc = "Find TODOs" },
     },
   },
-  -- Szybkie skoki po ekranie: s + 2 znaki
+  -- Fast on-screen jumps: s + 2 chars
   {
     "folke/flash.nvim",
     event = "VeryLazy",
@@ -51,25 +51,25 @@ return {
       { "S", mode = { "n", "x", "o" }, function() require("flash").treesitter() end, desc = "Flash treesitter" },
     },
   },
-  -- Sesje per katalog
+  -- Per-directory sessions
   {
     "folke/persistence.nvim",
     event = "BufReadPre",
     opts = {},
     keys = {
-      { "<leader>qs", function() require("persistence").load() end, desc = "Przywróć sesję (katalog)" },
-      { "<leader>ql", function() require("persistence").load({ last = true }) end, desc = "Przywróć ostatnią sesję" },
-      { "<leader>qd", function() require("persistence").stop() end, desc = "Nie zapisuj sesji" },
+      { "<leader>qs", function() require("persistence").load() end, desc = "Restore session (cwd)" },
+      { "<leader>ql", function() require("persistence").load({ last = true }) end, desc = "Restore last session" },
+      { "<leader>qd", function() require("persistence").stop() end, desc = "Don't save session" },
     },
   },
-  -- mini.nvim: lepsze text-objecty, surround, komentarze, auto-pary
+  -- mini.nvim: better text objects, surround, auto-pairs, moving lines
   {
     "nvim-mini/mini.nvim",
     version = false,
     event = "VeryLazy",
     config = function()
-      require("mini.ai").setup({ n_lines = 500 }) -- np. vif, daa, ci"
-      -- gsa (dodaj), gsd (usuń), gsr (zamień) otoczenie, np. gsaiw"
+      require("mini.ai").setup({ n_lines = 500 }) -- e.g. vif, daa, ci"
+      -- gsa (add), gsd (delete), gsr (replace) surroundings, e.g. gsaiw"
       require("mini.surround").setup({
         mappings = {
           add = "gsa", delete = "gsd", find = "gsf", find_left = "gsF",
@@ -77,7 +77,7 @@ return {
         },
       })
       require("mini.pairs").setup()
-      require("mini.move").setup() -- Alt+hjkl przesuwa linie/zaznaczenie
+      require("mini.move").setup() -- Alt+hjkl moves lines/selection
     end,
   },
 }

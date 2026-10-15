@@ -1,4 +1,4 @@
--- Motyw. Żeby zmienić: podmień wtyczkę i nazwę w vim.cmd.colorscheme.
+-- Colorscheme. To change it: swap the plugin and the name in vim.cmd.colorscheme.
 return {
   "folke/tokyonight.nvim",
   lazy = false,

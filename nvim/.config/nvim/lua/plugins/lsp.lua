@@ -1,12 +1,12 @@
--- LSP: mason instaluje serwery, nvim-lspconfig dostarcza ich konfigurację,
--- mason-lspconfig automatycznie je włącza (vim.lsp.enable, Neovim 0.11+).
--- Żeby dodać język: dopisz serwer do `servers` (nazwy: :help lspconfig-all).
+-- LSP: mason installs the servers, nvim-lspconfig provides their configs,
+-- mason-lspconfig enables them automatically (vim.lsp.enable, Neovim 0.11+).
+-- To add a language: add the server to `servers` (names: :help lspconfig-all).
 local servers = {
-  bashls = {}, -- bash/sh (+ shellcheck automatycznie)
+  bashls = {}, -- bash/sh (+ shellcheck automatically)
   terraformls = {},
   tflint = {},
   pyright = {},
-  ruff = {}, -- szybki linter + formatter Pythona
+  ruff = {}, -- fast Python linter + formatter
   yamlls = {},
   jsonls = {},
   dockerls = {},
@@ -17,13 +17,13 @@ local servers = {
   marksman = {}, -- markdown
 }
 
--- Narzędzia spoza LSP (formatery / lintery) instalowane przez mason
-local tools = { "shfmt", "shellcheck", "stylua", "hadolint" }
+-- Non-LSP tools (formatters / linters / debuggers) installed by mason
+local tools = { "shfmt", "shellcheck", "stylua", "hadolint", "debugpy", "tree-sitter-cli" }
 
 return {
   {
     "mason-org/mason.nvim",
-    cmd = "Mason",
+    lazy = false, -- puts Mason tools on PATH from startup
     keys = { { "<leader>cm", "<cmd>Mason<cr>", desc = "Mason" } },
     opts = { ui = { border = "rounded" } },
   },
@@ -35,7 +35,7 @@ return {
   },
   { "b0o/SchemaStore.nvim", lazy = true, version = false },
   {
-    "folke/lazydev.nvim", -- podpowiedzi API Neovima przy edycji tego configu
+    "folke/lazydev.nvim", -- Neovim API completion when editing this config
     ft = "lua",
     opts = { library = { { path = "${3rd}/luv/library", words = { "vim%.uv" } } } },
   },
@@ -48,11 +48,11 @@ return {
       "saghen/blink.cmp",
     },
     config = function()
-      -- Ustawienia per-serwer (nadpisują domyślne z nvim-lspconfig)
+      -- Per-server settings (override nvim-lspconfig defaults)
       servers.yamlls = {
         settings = {
           yaml = {
-            schemaStore = { enable = false, url = "" }, -- używamy SchemaStore.nvim
+            schemaStore = { enable = false, url = "" }, -- SchemaStore.nvim is used instead
             schemas = vim.tbl_extend("force", require("schemastore").yaml.schemas(), {
               kubernetes = { "k8s/**/*.yaml", "kubernetes/**/*.yaml", "manifests/**/*.yaml" },
             }),
@@ -72,7 +72,7 @@ return {
           Lua = { completion = { callSnippet = "Replace" }, telemetry = { enable = false } },
         },
       }
-      -- nvim-lspconfig używa tu API z Neovim 0.12; wersja zgodna też z 0.11
+      -- nvim-lspconfig uses a Neovim 0.12 API here; this variant also works on 0.11
       servers.terraformls = {
         on_attach = function(_, bufnr)
           if vim.lsp.codelens.enable then
@@ -83,8 +83,19 @@ return {
         end,
       }
       servers.pyright = {
+        -- use the project's .venv/venv if present
+        before_init = function(_, config)
+          if os.getenv("VIRTUAL_ENV") or not config.root_dir then return end
+          for _, dir in ipairs({ ".venv", "venv" }) do
+            local py = config.root_dir .. "/" .. dir .. "/bin/python"
+            if vim.fn.executable(py) == 1 then
+              config.settings.python = vim.tbl_deep_extend("force", config.settings.python or {}, { pythonPath = py })
+              return
+            end
+          end
+        end,
         settings = {
-          pyright = { disableOrganizeImports = true }, -- robi to ruff
+          pyright = { disableOrganizeImports = true }, -- ruff does this
           python = { analysis = { typeCheckingMode = "basic" } },
         },
       }
@@ -115,28 +126,28 @@ return {
         },
       })
 
-      -- Skróty aktywne tylko gdy LSP jest podpięty do bufora.
-      -- Domyślne w 0.11: K (hover), grn (rename), gra (akcje), grr (referencje),
-      -- gri (implementacje), gO (symbole), Ctrl+s w insert (sygnatura).
+      -- Keymaps active only when an LSP client is attached to the buffer.
+      -- Built-in defaults: K (hover), grn (rename), gra (actions), grr (references),
+      -- gri (implementations), gO (symbols).
       vim.api.nvim_create_autocmd("LspAttach", {
         group = vim.api.nvim_create_augroup("user_lsp_attach", { clear = true }),
         callback = function(ev)
           local map = function(keys, fn, desc, mode)
             vim.keymap.set(mode or "n", keys, fn, { buffer = ev.buf, desc = "LSP: " .. desc })
           end
-          map("gd", function() Snacks.picker.lsp_definitions() end, "Definicja")
-          map("gD", vim.lsp.buf.declaration, "Deklaracja")
-          map("gr", function() Snacks.picker.lsp_references() end, "Referencje")
-          map("gI", function() Snacks.picker.lsp_implementations() end, "Implementacje")
-          map("gy", function() Snacks.picker.lsp_type_definitions() end, "Definicja typu")
-          map("<leader>ca", vim.lsp.buf.code_action, "Akcje kodu", { "n", "x" })
-          map("<leader>cr", vim.lsp.buf.rename, "Zmień nazwę")
-          map("<leader>cs", function() Snacks.picker.lsp_symbols() end, "Symbole w pliku")
-          map("<leader>cS", function() Snacks.picker.lsp_workspace_symbols() end, "Symbole w projekcie")
-          map("<leader>ci", "<cmd>checkhealth vim.lsp<cr>", "Info o LSP")
+          map("gd", function() Snacks.picker.lsp_definitions() end, "Definition")
+          map("gD", vim.lsp.buf.declaration, "Declaration")
+          map("gr", function() Snacks.picker.lsp_references() end, "References")
+          map("gI", function() Snacks.picker.lsp_implementations() end, "Implementations")
+          map("gy", function() Snacks.picker.lsp_type_definitions() end, "Type definition")
+          map("<leader>ca", vim.lsp.buf.code_action, "Code actions", { "n", "x" })
+          map("<leader>cr", vim.lsp.buf.rename, "Rename")
+          map("<leader>cs", function() Snacks.picker.lsp_symbols() end, "Document symbols")
+          map("<leader>cS", function() Snacks.picker.lsp_workspace_symbols() end, "Workspace symbols")
+          map("<leader>ci", "<cmd>checkhealth vim.lsp<cr>", "LSP info")
           map("<leader>uh", function()
             vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled({ bufnr = ev.buf }), { bufnr = ev.buf })
-          end, "Przełącz inlay hints")
+          end, "Toggle inlay hints")
         end,
       })
     end,

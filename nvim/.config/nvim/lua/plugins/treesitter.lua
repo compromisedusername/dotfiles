@@ -1,39 +1,43 @@
--- Podświetlanie składni / wcięcia przez tree-sitter.
--- Gałąź "master" jest stabilna i działa z Neovim 0.11 bez dodatkowego
--- tree-sitter CLI (gałąź "main" to przepisana wersja wymagająca CLI).
+-- Syntax highlighting, indentation and folding via tree-sitter.
+-- "main" branch (Neovim 0.12+). Parsers are compiled by the tree-sitter CLI
+-- installed by Mason (`tools` list in lsp.lua).
+-- gitcommit is skipped: Mason's tree-sitter CLI can't build it on glibc 2.36 (Debian 12);
+-- commit messages use Vim's built-in syntax highlighting.
+local parsers = {
+  "bash", "python", "terraform", "hcl", "lua", "luadoc", "vim", "vimdoc",
+  "query", "yaml", "json", "toml", "dockerfile", "helm", "gotmpl",
+  "go", "make", "ini", "sql", "markdown", "markdown_inline", "regex",
+  "diff", "git_config", "gitignore", "git_rebase", "groovy",
+  "javascript", "html", "xml", "csv", "ssh_config", "jq", "nginx",
+}
+
+-- No treesitter indentation where the built-in one works better
+local no_ts_indent = { yaml = true, python = true, markdown = true }
+
 return {
   "nvim-treesitter/nvim-treesitter",
-  branch = "master",
+  branch = "main",
+  lazy = false, -- the main branch doesn't support lazy-loading
   build = ":TSUpdate",
-  event = { "BufReadPre", "BufNewFile" },
-  cmd = { "TSInstall", "TSUpdate", "TSUpdateSync", "TSInstallInfo" },
-  main = "nvim-treesitter.configs",
-  opts = {
-    -- Jawna lista parserów; auto_install wyłączone - nic nie ściąga się samo.
-    ensure_installed = {
-      "bash", "python", "terraform", "hcl", "lua", "luadoc", "vim", "vimdoc",
-      "query", "yaml", "json", "jsonc", "toml", "dockerfile", "helm", "gotmpl",
-      "go", "make", "ini", "sql", "markdown", "markdown_inline", "regex",
-      "diff", "git_config", "gitcommit", "gitignore", "git_rebase", "groovy",
-      "javascript", "html", "xml", "csv", "ssh_config", "jq", "nginx",
-    },
-    auto_install = false,
-    highlight = {
-      enable = true,
-      disable = function(_, buf)
-        local ok, stats = pcall(vim.uv.fs_stat, vim.api.nvim_buf_get_name(buf))
-        return ok and stats and stats.size > 2 * 1024 * 1024 -- >2MB: bez TS
+  dependencies = { "mason-org/mason.nvim" }, -- tree-sitter CLI on PATH
+  config = function()
+    local ts = require("nvim-treesitter")
+    ts.setup()
+
+    -- Install missing parsers in the background (explicit list only)
+    local installed = ts.get_installed()
+    local missing = vim.tbl_filter(function(p) return not vim.tbl_contains(installed, p) end, parsers)
+    if #missing > 0 and vim.fn.executable("tree-sitter") == 1 then ts.install(missing) end
+
+    vim.api.nvim_create_autocmd("FileType", {
+      group = vim.api.nvim_create_augroup("user_treesitter", { clear = true }),
+      callback = function(ev)
+        local lang = vim.treesitter.language.get_lang(ev.match)
+        if not lang or not pcall(vim.treesitter.start, ev.buf, lang) then return end
+        if not no_ts_indent[lang] then
+          vim.bo[ev.buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+        end
       end,
-    },
-    indent = { enable = true, disable = { "yaml", "python" } },
-    incremental_selection = {
-      enable = true,
-      keymaps = {
-        init_selection = "<C-space>",
-        node_incremental = "<C-space>",
-        node_decremental = "<bs>",
-        scope_incremental = false,
-      },
-    },
-  },
+    })
+  end,
 }

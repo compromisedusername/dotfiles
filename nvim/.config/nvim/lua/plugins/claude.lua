@@ -1,10 +1,10 @@
--- Integracja z Claude Code (claudecode.nvim od Coder).
--- Działa jak oficjalne rozszerzenie VS Code: Claude CLI w terminalu z boku
--- widzi Twój aktywny plik/zaznaczenie, a proponowane zmiany pokazuje jako
--- diff w Neovimie do akceptacji (:w / <leader>aa) lub odrzucenia (<leader>ad).
--- Serwer WebSocket nasłuchuje tylko na 127.0.0.1 i wymaga tokenu
--- (plik lock w ~/.claude/ide/).
--- Wymaga: polecenia `claude` w PATH.
+-- Claude Code integration (claudecode.nvim by Coder).
+-- Works like the official VS Code extension: the Claude CLI in a side terminal
+-- sees your active file/selection and shows proposed edits as a diff in Neovim
+-- to accept (:w / <leader>aa) or reject (<leader>ad).
+-- The WebSocket server listens on 127.0.0.1 only and requires a token
+-- (lock file in ~/.claude/ide/).
+-- Requires: `claude` command in PATH.
 return {
   "coder/claudecode.nvim",
   dependencies = { "folke/snacks.nvim" },
@@ -21,20 +21,20 @@ return {
     },
   },
   keys = {
-    { "<leader>ac", "<cmd>ClaudeCode<cr>", desc = "Claude: przełącz" },
-    { "<leader>af", "<cmd>ClaudeCodeFocus<cr>", desc = "Claude: fokus" },
-    { "<leader>ar", "<cmd>ClaudeCode --resume<cr>", desc = "Claude: wznów rozmowę" },
-    { "<leader>aC", "<cmd>ClaudeCode --continue<cr>", desc = "Claude: kontynuuj ostatnią" },
-    { "<leader>am", "<cmd>ClaudeCodeSelectModel<cr>", desc = "Claude: wybierz model" },
-    { "<leader>ab", "<cmd>ClaudeCodeAdd %<cr>", desc = "Claude: dodaj bieżący plik" },
-    { "<leader>as", "<cmd>ClaudeCodeSend<cr>", mode = "v", desc = "Claude: wyślij zaznaczenie" },
+    { "<leader>ac", "<cmd>ClaudeCode<cr>", desc = "Claude: toggle" },
+    { "<leader>af", "<cmd>ClaudeCodeFocus<cr>", desc = "Claude: focus" },
+    { "<leader>ar", "<cmd>ClaudeCode --resume<cr>", desc = "Claude: resume conversation" },
+    { "<leader>aC", "<cmd>ClaudeCode --continue<cr>", desc = "Claude: continue last" },
+    { "<leader>am", "<cmd>ClaudeCodeSelectModel<cr>", desc = "Claude: select model" },
+    { "<leader>ab", "<cmd>ClaudeCodeAdd %<cr>", desc = "Claude: add current file" },
+    { "<leader>as", "<cmd>ClaudeCodeSend<cr>", mode = "v", desc = "Claude: send selection" },
     {
       "<leader>as",
       "<cmd>ClaudeCodeTreeAdd<cr>",
-      desc = "Claude: dodaj plik z drzewa",
+      desc = "Claude: add file from tree",
       ft = { "neo-tree" },
     },
-    { "<leader>aa", "<cmd>ClaudeCodeDiffAccept<cr>", desc = "Claude: akceptuj diff" },
-    { "<leader>ad", "<cmd>ClaudeCodeDiffDeny<cr>", desc = "Claude: odrzuć diff" },
+    { "<leader>aa", "<cmd>ClaudeCodeDiffAccept<cr>", desc = "Claude: accept diff" },
+    { "<leader>ad", "<cmd>ClaudeCodeDiffDeny<cr>", desc = "Claude: reject diff" },
   },
 }

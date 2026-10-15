@@ -1,6 +1,6 @@
-# zsh: pluginy klonowane automatycznie przez .plugins.zsh
+# zsh: plugins cloned automatically by .plugins.zsh
 zsh/.zsh
-# lokalne/prywatne pliki zsh (sekrety, tokeny, ustawienia per maszyna)
+# local/private zsh files (secrets, tokens, per-machine settings)
 zsh/.*private*.zsh
 *.local.zsh
 .env

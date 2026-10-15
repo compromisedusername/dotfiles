@@ -1,13 +1,5 @@
--- Opcjonalne dodatki. Ustaw `enabled = true`, zapisz i zrestartuj nvim.
+-- Optional extras. Set `enabled = true`, save and restart nvim.
 return {
-  -- GitHub Copilot (był w poprzednim configu). Po włączeniu: :Copilot auth
+  -- GitHub Copilot (was in the previous config). After enabling: :Copilot auth
   { "github/copilot.vim", enabled = false, event = "InsertEnter" },
-
-  -- Podgląd markdown w buforze
-  {
-    "MeanderingProgrammer/render-markdown.nvim",
-    enabled = false,
-    ft = { "markdown" },
-    opts = {},
-  },
 }

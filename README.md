@@ -1,41 +1,49 @@
 # dotfiles
 
-Konfiguracja zsh i Neovima (WSL2 / Ubuntu), linkowana do `$HOME` przez [GNU stow](https://www.gnu.org/software/stow/).
+zsh and Neovim configuration (WSL2 / Debian), linked into `$HOME` with [GNU stow](https://www.gnu.org/software/stow/).
 
 ```
 zsh/                    -> ~/.zshrc, ~/.aliases*.zsh, ~/.plugins.zsh, ~/.p10k.zsh, ~/.fzf.zsh
-nvim/.config/nvim/      -> ~/.config/nvim   (opis configu: nvim/.config/nvim/README.md)
+nvim/.config/nvim/      -> ~/.config/nvim   (see nvim/.config/nvim/README.md)
 ```
 
-## Instalacja na nowej maszynie
+## Install on a new machine
 
 ```sh
 sudo apt install stow git zsh fzf fd-find ripgrep build-essential unzip
 git clone git@gitlab.czk.comarch:ossowskib/dotfiles.git ~/dotfiles
 cd ~/dotfiles
-./install.sh            # albo: ./install.sh nvim / ./install.sh zsh
+./install.sh            # or: ./install.sh nvim / ./install.sh zsh
 chsh -s "$(which zsh)"
 ```
 
-Jeśli w `$HOME` istnieją już zwykłe pliki (np. `~/.zshrc`, `~/.config/nvim`), stow odmówi
-nadpisania - przenieś je najpierw na bok.
+If regular files already exist in `$HOME` (e.g. `~/.zshrc`, `~/.config/nvim`), stow refuses
+to overwrite them - move them aside first.
 
-* **zsh:** przy pierwszym uruchomieniu `.plugins.zsh` sklonuje powerlevel10k i pluginy do `~/.zsh`.
-* **nvim:** przy pierwszym uruchomieniu lazy.nvim zainstaluje wtyczki w wersjach z `lazy-lock.json`,
-  a Mason serwery LSP. Potem `:checkhealth`.
+* **zsh:** on first start `.plugins.zsh` clones powerlevel10k and the plugins into `~/.zsh`.
+* **nvim:** on first start lazy.nvim installs the plugins at the versions pinned in
+  `lazy-lock.json` and Mason installs the LSP servers. Then run `:checkhealth`.
+* **CLI tools** (built from source, modules verified against sum.golang.org):
+  ```sh
+  go install github.com/jesseduffield/lazygit@latest
+  go install github.com/derailed/k9s@latest
+  go install github.com/stern/stern@latest
+  go install github.com/yannh/kubeconform/cmd/kubeconform@latest
+  go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest
+  ```
 
-## Codzienna praca
+## Day-to-day
 
-Pliki w `$HOME` to symlinki do tego repo, więc edytujesz normalnie, a potem:
+Files in `$HOME` are symlinks into this repo, so edit them as usual, then:
 
 ```sh
 cd ~/dotfiles && git add -A && git commit -m "..." && git push
 ```
 
-Po `:Lazy update` w nvimie commituj też zmieniony `nvim/.config/nvim/lazy-lock.json`.
+After `:Lazy update` in nvim, commit the updated `nvim/.config/nvim/lazy-lock.json` too.
 
-## Sekrety
+## Secrets
 
-Nie commituj tokenów ani haseł. Trzymaj je w plikach pasujących do `zsh/.*private*.zsh`
-(np. `zsh/.aliases_private.zsh` - ładowany automatycznie przez pętlę w `.zshrc`, ignorowany przez git).
-Repo ma włączone GitLab Secret Detection w CI.
+Never commit tokens or passwords. Keep them in files matching `zsh/.*private*.zsh`
+(e.g. `zsh/.aliases_private.zsh` - sourced automatically by the loop in `.zshrc`, ignored by git).
+GitLab Secret Detection runs in CI.
