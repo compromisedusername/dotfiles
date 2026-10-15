@@ -6,14 +6,19 @@
 --    + namespace; on production you have to type the context name,
 --  * commands run with an explicit --context (the one you confirmed),
 --  * a resource edit buffer refuses to save if the context changed in the meantime,
---  * decoded Secrets never touch the disk (no file, swap or undo).
+--  * decoded Secrets never touch the disk (no file, swap or undo),
+--  * switching kubeconfig (<leader>kf) changes $KUBECONFIG of this nvim instance only.
+--
+-- Kubeconfigs: one file per cluster in ~/.kube/configs/*.yaml, described by
+-- `kcfg-info` (dotfiles: zsh/.local/bin) - the same data as `kcfg` in zsh.
 local M = {}
 
--- Contexts matching these patterns (Lua patterns) are treated as production.
--- Keep in sync with ~/.p10k.zsh (red prompt).
-M.prod_patterns = { "prod", "prd", "production" }
+-- A context / kubeconfig name is production when one of its words (split on
+-- - _ . / @ :) is in this list - "acme-prod-eu" is, "nonprod", "non-prod" and
+-- "preprod" are not. Keep in sync with kcfg-info and ~/.p10k.zsh (red prompt).
+M.prod_words = { prod = true, prd = true, production = true }
 
-M.state = { context = nil, namespace = nil }
+M.state = { context = nil, namespace = nil, kubeconfig = nil, server = nil }
 
 local function notify(msg, level)
   vim.notify(msg, level or vim.log.levels.INFO, { title = "kube" })
@@ -57,30 +62,78 @@ end
 
 -- State: context / namespace -----------------------------------------------------
 
-function M.is_prod(ctx)
-  ctx = (ctx or ""):lower()
-  for _, p in ipairs(M.prod_patterns) do
-    if ctx:find(p) then
+local function matches_prod(s)
+  local words = {}
+  for w in (s or ""):lower():gmatch("[%l%d]+") do
+    table.insert(words, w)
+  end
+  for i, w in ipairs(words) do
+    if M.prod_words[w] and words[i - 1] ~= "non" then
       return true
     end
   end
   return false
 end
 
+-- Production if the context name or (when no context is given) the active
+-- kubeconfig file name matches M.prod_patterns.
+function M.is_prod(ctx)
+  if ctx ~= nil then
+    return matches_prod(ctx)
+  end
+  return matches_prod(M.state.context) or matches_prod(M.kubeconfig_name())
+end
+
+-- Active kubeconfig file: $KUBECONFIG of this nvim, or ~/.kube/config (resolved)
+function M.kubeconfig_path()
+  local env = vim.env.KUBECONFIG
+  if env and env ~= "" then
+    return env
+  end
+  local default = vim.fn.expand("~/.kube/config")
+  return vim.fn.resolve(default)
+end
+
+function M.kubeconfig_name()
+  local p = M.state.kubeconfig or M.kubeconfig_path()
+  return p and vim.fn.fnamemodify(p, ":t:r") or nil
+end
+
 -- Read from kubeconfig (local only, no cluster connection)
-function M.refresh_state()
+-- One `kubectl config view --minify` call (local, no cluster access, secrets redacted).
+-- refresh_state()        - synchronous (~50 ms), used before actions
+-- refresh_state(true)    - asynchronous, used for the statusline (never blocks the UI)
+local function apply_state(res)
+  M.state.kubeconfig = M.kubeconfig_path()
+  local ok, cfg = pcall(vim.json.decode, res.code == 0 and res.stdout or "")
+  if not ok or type(cfg) ~= "table" then
+    M.state.context, M.state.namespace, M.state.server = nil, nil, nil
+  else
+    local ctx = (cfg.contexts or {})[1] or {}
+    local cluster = (cfg.clusters or {})[1] or {}
+    M.state.context = cfg["current-context"] ~= "" and cfg["current-context"] or nil
+    M.state.namespace = (ctx.context or {}).namespace or "default"
+    M.state.server = (cluster.cluster or {}).server
+  end
+  pcall(function()
+    require("lualine").refresh()
+  end)
+end
+
+function M.refresh_state(async)
   if vim.fn.executable("kubectl") == 0 then
     return
   end
-  local ctx = kubectl({ "config", "current-context" }, { timeout = 3000 })
-  M.state.context = ctx.code == 0 and vim.trim(ctx.stdout) or nil
-  local ns = kubectl({ "config", "view", "--minify", "-o", "jsonpath={..namespace}" }, { timeout = 3000 })
-  M.state.namespace = (ns.code == 0 and vim.trim(ns.stdout) ~= "") and vim.trim(ns.stdout) or "default"
-  vim.schedule(function()
-    pcall(function()
-      require("lualine").refresh()
+  local cmd = { "kubectl", "config", "view", "--minify", "-o", "json" }
+  if async then
+    vim.system(cmd, { text = true, timeout = 5000 }, function(res)
+      vim.schedule(function()
+        apply_state(res)
+      end)
     end)
-  end)
+  else
+    apply_state(run(cmd, { timeout = 5000 }))
+  end
 end
 
 -- lualine component: ⎈ context/namespace (red on production)
@@ -88,14 +141,43 @@ function M.statusline()
   if not M.state.context then
     return ""
   end
-  return "⎈ " .. M.state.context .. "/" .. (M.state.namespace or "default")
+  local name = M.kubeconfig_name()
+  local prefix = (name and name ~= M.state.context and name ~= "config") and (name .. " › ") or ""
+  return "⎈ " .. prefix .. M.state.context .. "/" .. (M.state.namespace or "default")
 end
 
 function M.statusline_color()
-  if M.is_prod(M.state.context) then
+  if M.is_prod() then
     return { fg = "#ffffff", bg = "#c0392b", gui = "bold" }
   end
   return nil
+end
+
+-- kcfg-info data for kubeconfig files (nil if the helper isn't installed)
+local function kcfg_info(files)
+  if vim.fn.executable("kcfg-info") == 0 then
+    return nil
+  end
+  local res = run(vim.list_extend({ "kcfg-info", "--json" }, files or {}), { timeout = 15000 })
+  if res.code ~= 0 then
+    return nil
+  end
+  local ok, data = pcall(vim.json.decode, res.stdout)
+  return ok and data or nil
+end
+
+-- Identity (SA / cert / exec) of the current context in the active kubeconfig
+local function current_identity()
+  local path = M.state.kubeconfig
+  if not path or vim.fn.filereadable(path) == 0 then
+    return nil
+  end
+  local data = kcfg_info({ path })
+  for _, c in ipairs(data and data[1] and data[1].contexts or {}) do
+    if c.context == M.state.context then
+      return c.identity
+    end
+  end
 end
 
 -- Confirm a cluster-mutating operation. Returns the context to use, or nil.
@@ -106,10 +188,17 @@ local function confirm(action)
     notify("No active kubectl context", vim.log.levels.ERROR)
     return nil
   end
-  if M.is_prod(ctx) then
-    local ans = vim.fn.input(
-      string.format("⚠ PRODUCTION [%s / ns: %s]\n%s\nType the context name to confirm: ", ctx, ns, action)
-    )
+  local details = string.format(
+    "Kubeconfig: %s\nContext:    %s\nNamespace:  %s\nServer:     %s\nIdentity:   %s",
+    vim.fn.fnamemodify(M.state.kubeconfig or "?", ":~"),
+    ctx,
+    ns,
+    M.state.server or "?",
+    current_identity() or "?"
+  )
+  if M.is_prod() then
+    local ans =
+      vim.fn.input(string.format("⚠ PRODUCTION\n%s\n\n%s\nType the context name to confirm: ", details, action))
     vim.cmd("redraw")
     if ans ~= ctx then
       notify("Cancelled")
@@ -117,8 +206,7 @@ local function confirm(action)
     end
     return ctx
   end
-  local choice =
-    vim.fn.confirm(string.format("%s\n\nContext: %s\nNamespace: %s", action, ctx, ns), "&Yes\n&No", 2, "Question")
+  local choice = vim.fn.confirm(string.format("%s\n\n%s", action, details), "&Yes\n&No", 2, "Question")
   return choice == 1 and ctx or nil
 end
 
@@ -365,6 +453,188 @@ function M.select_context()
   end)
 end
 
+-- Table picker: fixed column header (winbar), aligned rows, details pane below.
+-- opts = { title, header, rows = { { text, value, hl } }, footer, cursor, preview(value) -> lines,
+--          on_select(value), keys = { [lhs] = function(value) } }
+local function table_picker(opts)
+  local rows = opts.rows
+  local width = vim.fn.strdisplaywidth(opts.header)
+  for _, r in ipairs(rows) do
+    width = math.max(width, vim.fn.strdisplaywidth(r.text))
+  end
+  local chrome = math.max(vim.fn.strdisplaywidth(opts.title or ""), vim.fn.strdisplaywidth(opts.footer or "")) + 4
+  width = math.min(math.max(width + 1, chrome), vim.o.columns - 4)
+  local preview_h = opts.preview and 9 or 0
+  local list_h = math.max(1, math.min(#rows, vim.o.lines - preview_h - 10))
+  local total_h = list_h + 1 + (preview_h > 0 and preview_h + 2 or 0)
+  local row0 = math.max(1, math.floor((vim.o.lines - total_h) / 2) - 1)
+  local col0 = math.floor((vim.o.columns - width) / 2)
+
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.bo[buf].bufhidden = "wipe"
+  vim.api.nvim_buf_set_lines(
+    buf,
+    0,
+    -1,
+    false,
+    vim.tbl_map(function(r)
+      return r.text
+    end, rows)
+  )
+  vim.bo[buf].modifiable = false
+  local ns = vim.api.nvim_create_namespace("kube_table")
+  for i, r in ipairs(rows) do
+    if r.hl then
+      vim.api.nvim_buf_set_extmark(buf, ns, i - 1, 0, { end_col = #r.text, hl_group = r.hl })
+    end
+  end
+
+  local win = vim.api.nvim_open_win(buf, true, {
+    relative = "editor",
+    row = row0,
+    col = col0,
+    width = width,
+    height = list_h + 1,
+    border = "rounded",
+    style = "minimal",
+    title = " " .. opts.title .. " ",
+    title_pos = "center",
+    footer = opts.footer and (" " .. opts.footer .. " ") or nil,
+    footer_pos = "center",
+  })
+  vim.wo[win].winbar = "%#Title#" .. opts.header:gsub("%%", "%%%%")
+  vim.wo[win].cursorline = true
+  vim.wo[win].wrap = false
+
+  local pbuf, pwin
+  if preview_h > 0 then
+    pbuf = vim.api.nvim_create_buf(false, true)
+    vim.bo[pbuf].bufhidden = "wipe"
+    pwin = vim.api.nvim_open_win(pbuf, false, {
+      relative = "editor",
+      row = row0 + list_h + 3,
+      col = col0,
+      width = width,
+      height = preview_h,
+      border = "rounded",
+      style = "minimal",
+      focusable = false,
+      title = " details ",
+      title_pos = "left",
+    })
+  end
+
+  local cache = {}
+  local function current()
+    return rows[vim.api.nvim_win_get_cursor(win)[1]]
+  end
+  local function update_preview()
+    if not pbuf then
+      return
+    end
+    local r = current()
+    if not r then
+      return
+    end
+    cache[r.value] = cache[r.value] or opts.preview(r.value)
+    vim.bo[pbuf].modifiable = true
+    vim.api.nvim_buf_set_lines(pbuf, 0, -1, false, cache[r.value])
+    vim.bo[pbuf].modifiable = false
+  end
+  local function close()
+    for _, w in ipairs({ win, pwin }) do
+      if w and vim.api.nvim_win_is_valid(w) then
+        vim.api.nvim_win_close(w, true)
+      end
+    end
+  end
+
+  if opts.cursor and opts.cursor >= 1 and opts.cursor <= #rows then
+    vim.api.nvim_win_set_cursor(win, { opts.cursor, 0 })
+  end
+  update_preview()
+  vim.api.nvim_create_autocmd("CursorMoved", { buffer = buf, callback = update_preview })
+  vim.api.nvim_create_autocmd("WinLeave", { buffer = buf, once = true, callback = close })
+
+  local function map(lhs, fn)
+    vim.keymap.set("n", lhs, fn, { buffer = buf, nowait = true })
+  end
+  map("<CR>", function()
+    local r = current()
+    close()
+    if r then
+      opts.on_select(r.value)
+    end
+  end)
+  map("q", close)
+  map("<Esc>", close)
+  for lhs, fn in pairs(opts.keys or {}) do
+    map(lhs, function()
+      local r = current()
+      close()
+      fn(r and r.value)
+    end)
+  end
+end
+
+-- Switch kubeconfig for this nvim instance (terminals opened from nvim inherit it).
+-- Rows come pre-aligned from `kcfg-info --list` - same table as `kcfg` in zsh.
+function M.select_kubeconfig()
+  if not have("kcfg-info") then
+    return
+  end
+  -- one call: aligned table + details for every row (cached by kcfg-info, ~70 ms)
+  local res = run({ "kcfg-info", "--picker" }, { timeout = 10000 })
+  local ok, data = pcall(vim.json.decode, res.code == 0 and res.stdout or "")
+  if not ok or type(data) ~= "table" or #(data.rows or {}) == 0 then
+    return notify("No kubeconfigs in ~/.kube/configs (add one with kcfg-add in zsh)", vim.log.levels.WARN)
+  end
+  local rows, details, cursor = {}, {}, 1
+  for _, r in ipairs(data.rows) do
+    local flags = r.text:sub(1, 4)
+    local hl = flags:find("P") and "DiagnosticError" or (flags:find("%*") and "DiagnosticOk") or nil
+    table.insert(rows, { text = r.text, value = r.path, hl = hl })
+    details[r.path] = r.details
+    if flags:find("%*") then
+      cursor = #rows
+    end
+  end
+  table_picker({
+    title = "Kubeconfig (this nvim only)   * active  D default  P prod  ! warnings",
+    header = data.header,
+    rows = rows,
+    cursor = cursor,
+    footer = "<CR> select   r reset to default   / search   q close",
+    preview = function(path)
+      return details[path] or {}
+    end,
+    on_select = function(path)
+      vim.env.KUBECONFIG = path
+      M.after_kubeconfig_switch()
+    end,
+    keys = {
+      r = function()
+        vim.env.KUBECONFIG = nil
+        M.after_kubeconfig_switch()
+      end,
+    },
+  })
+end
+
+function M.after_kubeconfig_switch()
+  M.refresh_state()
+  notify(
+    string.format(
+      "Kubeconfig: %s\nContext: %s/%s\nServer: %s",
+      M.kubeconfig_name() or "?",
+      M.state.context or "?",
+      M.state.namespace or "?",
+      M.state.server or "?"
+    ),
+    M.is_prod() and vim.log.levels.WARN or vim.log.levels.INFO
+  )
+end
+
 function M.select_namespace()
   if not have("kubectl") then
     return
@@ -454,23 +724,20 @@ function M.exec()
     if not ctx then
       return
     end
-    terminal(
-      {
-        "kubectl",
-        "--context",
-        ctx,
-        "exec",
-        "-it",
-        pod,
-        "-c",
-        container,
-        "--",
-        "sh",
-        "-c",
-        "command -v bash >/dev/null && exec bash || exec sh",
-      },
-      { win = { position = "float" } }
-    )
+    terminal({
+      "kubectl",
+      "--context",
+      ctx,
+      "exec",
+      "-it",
+      pod,
+      "-c",
+      container,
+      "--",
+      "sh",
+      "-c",
+      "command -v bash >/dev/null && exec bash || exec sh",
+    }, { win = { position = "float" } })
   end)
 end
 
@@ -509,7 +776,7 @@ end
 -- Edit a resource in a buffer: :w = kubectl replace (with confirmation)
 local function edit_resource(name)
   M.refresh_state()
-  local ctx, ns = M.state.context, M.state.namespace
+  local ctx, ns, kcfg = M.state.context, M.state.namespace, M.state.kubeconfig
   local res = kubectl({ "--context", ctx, "get", name, "-o", "yaml" })
   if res.code ~= 0 then
     return notify(err_of(res), vim.log.levels.ERROR)
@@ -528,13 +795,19 @@ local function edit_resource(name)
     buffer = buf,
     callback = function()
       M.refresh_state()
+      if M.state.kubeconfig ~= kcfg then
+        return notify(
+          "Kubeconfig changed to "
+            .. tostring(M.state.kubeconfig)
+            .. " - save refused (this buffer belongs to "
+            .. kcfg
+            .. ")",
+          vim.log.levels.ERROR
+        )
+      end
       if M.state.context ~= ctx then
         return notify(
-          "Context changed to "
-            .. tostring(M.state.context)
-            .. " - save refused (this buffer belongs to "
-            .. ctx
-            .. ")",
+          "Context changed to " .. tostring(M.state.context) .. " - save refused (this buffer belongs to " .. ctx .. ")",
           vim.log.levels.ERROR
         )
       end
@@ -604,21 +877,18 @@ local function resource_actions(name)
     elseif a == "exec" then
       local ctx = confirm("kubectl exec into " .. name)
       if ctx then
-        terminal(
-          {
-            "kubectl",
-            "--context",
-            ctx,
-            "exec",
-            "-it",
-            name,
-            "--",
-            "sh",
-            "-c",
-            "command -v bash >/dev/null && exec bash || exec sh",
-          },
-          { win = { position = "float" } }
-        )
+        terminal({
+          "kubectl",
+          "--context",
+          ctx,
+          "exec",
+          "-it",
+          name,
+          "--",
+          "sh",
+          "-c",
+          "command -v bash >/dev/null && exec bash || exec sh",
+        }, { win = { position = "float" } })
       end
     elseif a:match("delete") then
       local ctx = confirm("⛔ kubectl DELETE " .. name)
@@ -1131,11 +1401,11 @@ end
 -- Setup -------------------------------------------------------------------------
 
 function M.setup()
-  vim.schedule(M.refresh_state)
+  M.refresh_state(true)
   vim.api.nvim_create_autocmd("FocusGained", {
     group = vim.api.nvim_create_augroup("user_kube_state", { clear = true }),
     callback = function()
-      M.refresh_state()
+      M.refresh_state(true)
     end,
   })
 
@@ -1157,6 +1427,7 @@ function M.setup()
   local map = function(lhs, fn, desc, mode)
     vim.keymap.set(mode or "n", lhs, fn, { desc = desc })
   end
+  map("<leader>kf", M.select_kubeconfig, "Switch kubeconfig (this nvim only)")
   map("<leader>kc", M.select_context, "Switch context")
   map("<leader>kn", M.select_namespace, "Switch namespace")
   map("<leader>kd", M.diff, "Diff file/selection against cluster", { "n", "x" })

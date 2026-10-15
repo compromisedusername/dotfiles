@@ -3,7 +3,8 @@
 zsh and Neovim configuration (WSL2 / Debian), linked into `$HOME` with [GNU stow](https://www.gnu.org/software/stow/).
 
 ```
-zsh/                    -> ~/.zshrc, ~/.aliases*.zsh, ~/.plugins.zsh, ~/.p10k.zsh, ~/.fzf.zsh
+zsh/                    -> ~/.zshrc, ~/.aliases*.zsh, ~/.plugins.zsh, ~/.p10k.zsh, ~/.fzf.zsh,
+                           ~/.local/bin/kcfg-info
 nvim/.config/nvim/      -> ~/.config/nvim   (see nvim/.config/nvim/README.md)
 ```
 
@@ -31,6 +32,20 @@ to overwrite them - move them aside first.
   go install github.com/yannh/kubeconform/cmd/kubeconform@latest
   go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest
   ```
+
+## Kubeconfigs
+
+One file per cluster in `~/.kube/configs/<name>.yaml` (mode 600, never in this repo);
+`~/.kube/config` is a symlink to the default one.
+
+```sh
+kcfg                     # pick a kubeconfig for this shell (fzf with server/identity preview)
+kcfg -l                  # list: name, context, server, identity (SA / cert / exec)
+kcfg -d <name>           # default for new shells
+kcfg-add <file> [name]   # review + import a new kubeconfig
+```
+
+In Neovim: `<leader>kf`. Details in `nvim/.config/nvim/PORADNIK.md` (Polish).
 
 ## Day-to-day
 

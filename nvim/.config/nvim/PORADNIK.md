@@ -330,8 +330,10 @@ Inne: `<leader>gs` - status jako lista, `<leader>gl` - log z podglądem diffów.
 ## 9a. Kubernetes (`<leader>k`)
 
 Własny moduł (`lua/kube/init.lua`) oparty tylko na `kubectl` i `helm` - działa z Twoim kubeconfigiem.
-Na dole w pasku statusu widać **⎈ kontekst/namespace** - na **czerwono**, gdy kontekst zawiera
-`prod`, `prd` lub `production` (wzorce: `M.prod_patterns` w module i `~/.p10k.zsh`). Ten sam
+Na dole w pasku statusu widać **⎈ kontekst/namespace** - na **czerwono** na produkcji. Produkcja to
+nazwa, w której jest osobne słowo `prod`, `prd` lub `production` (np. `acme-prod-eu`, `db-prd`);
+`nonprod`, `non-prod` i `preprod` produkcją **nie** są. Listę słów zmienisz w `M.prod_words`
+(moduł), `PROD_WORDS` (`kcfg-info`) i `POWERLEVEL9K_KUBECONTEXT_CLASSES` (`~/.p10k.zsh`). Ten sam
 kontekst na czerwono z `⚠ PROD` pokazuje prompt zsh przy `kubectl`/`k`/`helm`/`k9s`/`stern`.
 
 ### Bezpieczeństwo
@@ -344,11 +346,62 @@ kontekst na czerwono z `⚠ PROD` pokazuje prompt zsh przy `kubectl`/`k`/`helm`/
 - Odkodowane Secrety są tylko w pamięci (bez pliku, swapa i historii undo). Nie zaznaczaj ich
   zawartości, gdy Claude jest podłączony - zaznaczenie trafia do jego kontekstu.
 
+### Kubeconfigi: jeden plik na klaster
+
+Każdy klaster to osobny plik w **`~/.kube/configs/<nazwa>.yaml`** (uprawnienia `600`, poza repo
+dotfiles - zawierają dane dostępowe). `~/.kube/config` to symlink do pliku **domyślnego** dla nowych
+terminali. Wybór kubeconfiga ustawia `$KUBECONFIG` **tylko w bieżącym terminalu / nvimie** - inne
+okna zostają na swoim klastrze.
+
+W zsh:
+
+| Polecenie | Akcja |
+|---|---|
+| `kcfg` | wybierz kubeconfig dla **tego terminala** (fzf; podgląd: serwer, namespace, tożsamość, ostrzeżenia) |
+| `kcfg <nazwa>` | od razu użyj `~/.kube/configs/<nazwa>.yaml` (Tab podpowiada nazwy) |
+| `kcfg -l` | tabela: nazwa, kontekst, namespace, serwer, typ uwierzytelnienia, tożsamość, data wygaśnięcia (`*` aktywny, `D` domyślny, `P` produkcja, `!` ostrzeżenia) |
+| `kcfg -r` | wróć do domyślnego w tym terminalu |
+| `kcfg -d [nazwa]` | ustaw domyślny dla nowych terminali (przestawia symlink `~/.kube/config`) |
+| `kcfg-add <plik> [nazwa]` | **dodaj nowy klaster**: pokazuje serwer, tożsamość i ostrzeżenia, pyta o zgodę, kopiuje z `600` |
+| `kcfg-info --show <plik>` | szczegóły dowolnego pliku kubeconfig (bez wypisywania sekretów) |
+
+W nvimie: **`<leader>kf`** - ta sama tabela co `kcfg` (nagłówek kolumn u góry, produkcja na
+czerwono, aktywny na zielono) i panel szczegółów pod spodem; `j`/`k` ruch, `/` szukanie, `Enter`
+wybór, `r` powrót do domyślnego, `q` zamknięcie; wybór działa tylko w tej instancji nvima (terminale, k9s i logi otwarte z nvima go
+dziedziczą). Pasek statusu pokazuje
+`⎈ plik › kontekst/namespace`, gdy nazwa pliku różni się od kontekstu.
+
+**Tożsamość** jest odczytywana lokalnie z pliku: dla tokenów - konto serwisowe (`SA namespace/nazwa`)
+i data wygaśnięcia, dla certyfikatów - `CN`/`O` i data ważności, dla wtyczek `exec` (EKS/GKE/AKS) -
+uruchamiane polecenie. Sam token nigdy nie jest wyświetlany, a wtyczki `exec` nie są uruchamiane.
+
+**Ostrzeżenia `!`:** wtyczka `exec` (uruchamia polecenie przy każdym `kubectl` - sprawdź, czy to
+znane narzędzie, np. `aws eks get-token`), `insecure-skip-tls-verify`, wygasły token, złe
+uprawnienia pliku.
+
+Okno potwierdzenia operacji w nvimie (apply, delete, edit, restart...) pokazuje teraz **plik
+kubeconfig, kontekst, namespace, serwer i tożsamość**. Za produkcję uznawany jest też plik, którego
+nazwa zawiera słowo `prod`/`prd`/`production` - warto tak nazywać pliki produkcyjne (np. `acme-prod-eu.yaml`).
+
+Typowo:
+
+```sh
+kcfg-add ~/Downloads/kubeconfig-acme-prod.yaml acme-prod-eu   # nowy klaster
+kcfg acme-prod-eu        # ten terminal → produkcja (czerwony prompt)
+nvim .                   # nvim w tym terminalu też widzi produkcję
+kcfg -r                  # z powrotem na domyślny
+```
+
+`kind` i `minikube` przy tworzeniu klastra dopisują go do `~/.kube/config` (czyli do pliku
+domyślnego). Lepiej od razu do osobnego pliku:
+`kind create cluster --name test --kubeconfig ~/.kube/configs/kind-test.yaml`.
+
 ### Kontekst i namespace
 
 | Skrót | Akcja |
 |---|---|
-| `<leader>kc` | przełącz kontekst (produkcyjne oznaczone ⚠) |
+| `<leader>kf` | przełącz **kubeconfig** (tylko w tym nvimie) |
+| `<leader>kc` | przełącz kontekst w aktywnym kubeconfigu (produkcyjne oznaczone ⚠) |
 | `<leader>kn` | przełącz namespace (zapisuje się w kubeconfigu, działa też w terminalu) |
 
 ### Praca z manifestami

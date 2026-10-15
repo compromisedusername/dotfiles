@@ -1,0 +1,440 @@
+#!/usr/bin/env python3
+"""kcfg-info - describe kubeconfig files without printing any secrets.
+
+Used by the `kcfg` zsh function and by the Neovim kube module.
+
+Usage:
+  kcfg-info --list             "<path>\t<aligned row>" per context in $KCFG_DIR,
+                               first line is the column header (for fzf / nvim pickers)
+  kcfg-info --table            aligned table for the terminal
+  kcfg-info --picker           JSON {header, rows: [{path, text, details}]} - one call for pickers
+  kcfg-info --show FILE        human-readable details + security warnings (fzf preview)
+  kcfg-info --json [FILE...]   JSON for all files in $KCFG_DIR (or the given files)
+
+Identity is derived locally: service-account name/namespace and expiry decoded from
+the token payload (the token itself is never printed), the certificate subject for
+client certificates, the command for `exec` plugins. Nothing is sent anywhere and
+`exec` plugins are never run (`kubectl config view` only reads the file).
+"""
+import base64
+import datetime
+import glob
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+
+KCFG_DIR = os.environ.get("KCFG_DIR", os.path.expanduser("~/.kube/configs"))
+DEFAULT_LINK = os.path.expanduser("~/.kube/config")
+
+
+try:
+    import yaml  # PyYAML - fast path
+
+    def load(path):
+        with open(path) as f:
+            cfg = yaml.safe_load(f)
+        if not isinstance(cfg, dict):
+            raise ValueError("not a kubeconfig")
+        return cfg
+except ImportError:  # fall back to kubectl (slower, ~50 ms per file)
+    def load(path):
+        r = subprocess.run(
+            ["kubectl", "config", "view", "--raw", "-o", "json", "--kubeconfig", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode != 0:
+            raise ValueError(r.stderr.strip() or "kubectl config view failed")
+        return json.loads(r.stdout)
+
+
+def b64decode(data):
+    data += "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data.replace("+", "-").replace("/", "_"))
+
+
+def fmt_time(ts):
+    try:
+        return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def fmt_date(ts):
+    try:
+        return datetime.datetime.fromtimestamp(int(ts), datetime.timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def mk(auth, who, label, expires=None, expired=False, **extra):
+    d = {"kind": auth, "auth": auth, "who": who, "label": label, "expires": expires, "expired": expired}
+    d.update(extra)
+    return d
+
+
+def jwt_identity(token):
+    """Service account / subject from a JWT payload (signature is not verified - display only)."""
+    try:
+        payload = json.loads(b64decode(token.split(".")[1]))
+    except Exception:
+        return mk("token", "(opaque token)", "token (opaque)")
+    k8s = payload.get("kubernetes.io") or {}
+    ns = k8s.get("namespace") or payload.get("kubernetes.io/serviceaccount/namespace")
+    sa = (k8s.get("serviceaccount") or {}).get("name") or payload.get("kubernetes.io/serviceaccount/service-account.name")
+    exp = fmt_time(payload.get("exp")) if payload.get("exp") else None
+    expired = bool(payload.get("exp")) and payload["exp"] < datetime.datetime.now().timestamp()
+    who = f"{ns}/{sa}" if sa else str(payload.get("sub") or payload.get("email") or payload.get("preferred_username") or "?")
+    label = ("SA " if sa else "token ") + who
+    if exp:
+        label += f" (expires {exp})" if not expired else f" (EXPIRED {exp})"
+    return mk("SA" if sa else "token", who, label, fmt_date(payload.get("exp")), expired)
+
+
+def cert_identity(pem=None, path=None):
+    cmd = ["openssl", "x509", "-noout", "-subject", "-enddate", "-nameopt", "RFC2253"]
+    try:
+        if path:
+            r = subprocess.run(cmd + ["-in", os.path.expanduser(path)], capture_output=True, text=True, timeout=5)
+        else:
+            r = subprocess.run(cmd, input=pem, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return mk("cert", "?", "client certificate")
+    subject, end = "?", None
+    for line in r.stdout.splitlines():
+        if line.startswith("subject="):
+            subject = line[len("subject="):].strip()
+        elif line.startswith("notAfter="):
+            end = line[len("notAfter="):].strip()
+    parts = dict(p.split("=", 1) for p in subject.split(",") if "=" in p)
+    who = parts.get("CN", subject)
+    if parts.get("O"):
+        who += f" ({parts['O']})"
+    expires, expired = None, False
+    if end:
+        try:
+            dt = datetime.datetime.strptime(end.replace(" GMT", ""), "%b %d %H:%M:%S %Y")
+            expires, expired = dt.strftime("%Y-%m-%d"), dt < datetime.datetime.utcnow()
+        except ValueError:
+            pass
+    label = f"cert {subject}" + (f" (expires {expires or end})" if end else "")
+    return mk("cert", who, label, expires, expired)
+
+
+def identity(user):
+    if user.get("token"):
+        return jwt_identity(user["token"])
+    if user.get("tokenFile"):
+        try:
+            with open(os.path.expanduser(user["tokenFile"])) as f:
+                ident = jwt_identity(f.read().strip())
+            ident["label"] += f" [file {user['tokenFile']}]"
+            return ident
+        except OSError:
+            return mk("token", f"file {user['tokenFile']}", f"token file {user['tokenFile']} (unreadable)")
+    if user.get("client-certificate-data"):
+        return cert_identity(pem=b64decode(user["client-certificate-data"]).decode(errors="replace"))
+    if user.get("client-certificate"):
+        return cert_identity(path=user["client-certificate"])
+    if user.get("exec"):
+        ex = user["exec"]
+        cmd = " ".join([ex.get("command", "?")] + list(ex.get("args") or []))
+        return mk("exec", cmd, f"exec: {cmd}", exec=cmd)
+    if user.get("auth-provider"):
+        name = user["auth-provider"].get("name", "?")
+        return mk("oidc", name, f"auth-provider: {name}")
+    if user.get("username"):
+        return mk("basic", user["username"], f"basic auth: {user['username']}")
+    return mk("none", "-", "no credentials")
+
+
+def realpath(p):
+    return os.path.realpath(os.path.expanduser(p)) if p else None
+
+
+def describe(path):
+    cfg = load(path)
+    clusters = {c["name"]: c.get("cluster", {}) for c in cfg.get("clusters") or []}
+    users = {u["name"]: u.get("user", {}) for u in cfg.get("users") or []}
+    entries = []
+    for ctx in cfg.get("contexts") or []:
+        c = ctx.get("context", {})
+        cluster = clusters.get(c.get("cluster"), {})
+        user = users.get(c.get("user"), {})
+        ident = identity(user)
+        warnings = []
+        if ident["kind"] == "exec":
+            warnings.append("runs a command on every kubectl call: " + ident["exec"])
+        if ident["kind"] == "oidc":
+            warnings.append("uses a deprecated auth-provider plugin")
+        if cluster.get("insecure-skip-tls-verify"):
+            warnings.append("insecure-skip-tls-verify: server certificate is NOT verified")
+        if ident.get("expired"):
+            warnings.append("token has expired")
+        entries.append({
+            "context": ctx["name"],
+            "cluster": c.get("cluster"),
+            "server": cluster.get("server", "?"),
+            "namespace": c.get("namespace") or "default",
+            "user": c.get("user"),
+            "identity": ident["label"],
+            "auth": ident["auth"],
+            "who": ident["who"],
+            "expires": "EXPIRED" if ident.get("expired") else (ident.get("expires") or "-"),
+            "current": ctx["name"] == cfg.get("current-context"),
+            "warnings": warnings,
+        })
+    mode = stat.S_IMODE(os.stat(path).st_mode)
+    file_warnings = []
+    if mode & 0o077:
+        file_warnings.append(f"file permissions {oct(mode)} - should be 0600 (chmod 600 {path})")
+    rp = realpath(path)
+    return {
+        "path": path,
+        "name": display_name(path),
+        "default": rp == realpath(DEFAULT_LINK),
+        "active": rp == realpath(os.environ.get("KUBECONFIG")) if os.environ.get("KUBECONFIG") else rp == realpath(DEFAULT_LINK),
+        "current_context": cfg.get("current-context"),
+        "contexts": entries,
+        "warnings": file_warnings,
+    }
+
+
+CACHE_FILE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "kcfg-info", "cache.json")
+CACHE_VERSION = 2
+
+
+def _stamp(path):
+    st = os.stat(path)
+    return [st.st_mtime_ns, st.st_size, stat.S_IMODE(st.st_mode)]
+
+
+def _load_cache():
+    try:
+        with open(CACHE_FILE) as f:
+            data = json.load(f)
+        return data.get("entries", {}) if data.get("version") == CACHE_VERSION else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_cache(entries):
+    # only derived, non-secret data (names, servers, identities, dates) is cached
+    try:
+        os.makedirs(os.path.dirname(CACHE_FILE), mode=0o700, exist_ok=True)
+        tmp = CACHE_FILE + ".tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            json.dump({"version": CACHE_VERSION, "entries": entries}, f)
+        os.replace(tmp, CACHE_FILE)
+    except OSError:
+        pass
+
+
+def describe_many(paths):
+    """describe() for many files: cached by (mtime, size, mode), misses parsed in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    cache = _load_cache()
+    out, missing = {}, []
+    for p in paths:
+        try:
+            stamp = _stamp(p)
+        except OSError:
+            continue
+        hit = cache.get(p)
+        if hit and hit["stamp"] == stamp:
+            out[p] = hit["data"]
+        else:
+            missing.append((p, stamp))
+    if missing:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for (p, stamp), d in zip(missing, pool.map(lambda m: safe_describe(m[0]), missing)):
+                out[p] = d
+                cache[p] = {"stamp": stamp, "data": d}
+        cache = {p: v for p, v in cache.items() if os.path.exists(p)}
+        _save_cache(cache)
+    # active/default depend on the environment, not on the file - compute fresh
+    default_rp, env = realpath(DEFAULT_LINK), os.environ.get("KUBECONFIG")
+    active_rp = realpath(env) if env else default_rp
+    result = []
+    for p in paths:
+        if p in out:
+            d = dict(out[p])
+            rp = realpath(p)
+            d["default"], d["active"] = rp == default_rp, rp == active_rp
+            result.append(d)
+    return result
+
+
+SKIP_SUFFIXES = (".bak", ".tmp", ".swp", ".orig", "~", ".lock")
+
+
+def all_files():
+    """Every regular, non-hidden file in KCFG_DIR (extension optional)."""
+    try:
+        names = os.listdir(KCFG_DIR)
+    except OSError:
+        return []
+    files = [
+        os.path.join(KCFG_DIR, n) for n in names
+        if not n.startswith(".") and not n.endswith(SKIP_SUFFIXES) and os.path.isfile(os.path.join(KCFG_DIR, n))
+    ]
+    return sorted(files, key=lambda p: display_name(p).lower())
+
+
+def display_name(path):
+    base = os.path.basename(path)
+    for ext in (".yaml", ".yml"):
+        if base.endswith(ext):
+            return base[: -len(ext)]
+    return base
+
+
+def safe_describe(path):
+    try:
+        return describe(path)
+    except Exception as e:  # broken file - still list it
+        return {"path": path, "name": display_name(path), "default": False,
+                "active": False, "current_context": None, "contexts": [], "warnings": [f"cannot read: {e}"]}
+
+
+# A name is production when one of its words (split on - _ . / @ :) is one of
+# these - so "acme-prod-eu" is, while "nonprod", "non-prod" and "preprod" are not.
+PROD_WORDS = ("prod", "prd", "production")
+
+# column: (header, max width) - values longer than max are cut with "…"
+COLUMNS = [
+    ("", 4),            # flags: * active, D default, P production, ! warnings
+    ("NAME", 22),
+    ("CONTEXT", 24),
+    ("NAMESPACE", 16),
+    ("SERVER", 36),
+    ("AUTH", 5),
+    ("IDENTITY", 34),
+    ("EXPIRES", 10),
+]
+
+
+def is_prod_name(name):
+    words = [w for w in re.split(r"[^a-z0-9]+", (name or "").lower()) if w]
+    return any(w in PROD_WORDS and (i == 0 or words[i - 1] != "non") for i, w in enumerate(words))
+
+
+def is_prod(*names):
+    return any(is_prod_name(n) for n in names)
+
+
+def records():
+    """One record per context: (path, [column values])."""
+    return records_from(describe_many(all_files()))
+
+
+def records_from(described):
+    for d in described:
+        file_warn = bool(d["warnings"])
+        if not d["contexts"]:
+            flags = ("*" if d["active"] else "") + ("D" if d["default"] else "") + "!"
+            yield d["path"], [flags, d["name"], "-", "-", "-", "-", "; ".join(d["warnings"]) or "no contexts", "-"]
+        for c in d["contexts"]:
+            flags = (
+                ("*" if d["active"] else "")
+                + ("D" if d["default"] else "")
+                + ("P" if is_prod(d["name"], c["context"]) else "")
+                + ("!" if file_warn or c["warnings"] else "")
+            )
+            server = c["server"].replace("https://", "")
+            yield d["path"], [flags, d["name"], c["context"], c["namespace"], server, c["auth"], c["who"], c["expires"]]
+
+
+def cut(text, width):
+    text = str(text)
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def aligned(recs):
+    """Header + rows with identical column widths (max content width, capped)."""
+    widths = []
+    for i, (head, cap) in enumerate(COLUMNS):
+        longest = max([len(head)] + [len(str(vals[i])) for _, vals in recs])
+        widths.append(min(longest, cap))
+    def fmt(vals):
+        return "  ".join(cut(v, w).ljust(w) for v, w in zip(vals, widths)).rstrip()
+    header = fmt([h for h, _ in COLUMNS])
+    return header, [(path, fmt(vals)) for path, vals in recs]
+
+
+LEGEND = "* active   D default for new shells   P production   ! warnings (details: kcfg-info --show <file>)"
+
+
+def show_lines(d):
+    tags = [t for t, on in (("ACTIVE", d["active"]), ("DEFAULT", d["default"])) if on]
+    out = [f"{d['name']}  {' '.join(tags)}".rstrip(), f"file:      {d['path']}", f"current:   {d['current_context']}"]
+    for c in d["contexts"]:
+        out += [
+            "",
+            f"context:   {c['context']}" + ("  (current)" if c["current"] else ""),
+            f"server:    {c['server']}",
+            f"cluster:   {c['cluster']}",
+            f"namespace: {c['namespace']}",
+            f"user:      {c['user']}",
+            f"identity:  {c['identity']}",
+        ]
+        out += [f"  ! {w}" for w in c["warnings"]]
+    out += [f"! {w}" for w in d["warnings"]]
+    return out
+
+
+def show(path):
+    d = describe_many([path])
+    print("\n".join(show_lines(d[0])) if d else f"cannot read {path}")
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    cmd = argv[1]
+    if cmd in ("--list", "--table"):
+        recs = list(records())
+        if not recs:
+            print(f"no kubeconfigs in {KCFG_DIR}", file=sys.stderr)
+            return 1
+        header, lines = aligned(recs)
+        if cmd == "--list":
+            print("\t" + header)
+            for path, line in lines:
+                print(f"{path}\t{line}")
+        else:
+            print(header)
+            print("-" * len(header))
+            for _, line in lines:
+                print(line)
+            print("\n" + LEGEND)
+    elif cmd == "--picker":
+        described = {d["path"]: d for d in describe_many(all_files())}
+        recs = list(records_from(described.values()))
+        header, lines = aligned(recs) if recs else ("", [])
+        print(json.dumps({
+            "header": header,
+            "rows": [{"path": p, "text": t, "details": show_lines(described[p])} for p, t in lines],
+        }))
+    elif cmd == "--show" and len(argv) == 3:
+        show(argv[2])
+    elif cmd == "--json":
+        files = argv[2:] or all_files()
+        print(json.dumps(describe_many(files)))
+    else:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv))
+    except ValueError as e:
+        print(f"kcfg-info: {e}", file=sys.stderr)
+        sys.exit(1)

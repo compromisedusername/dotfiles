@@ -1200,10 +1200,14 @@
   #   typeset -g POWERLEVEL9K_KUBECONTEXT_TEST_VISUAL_IDENTIFIER_EXPANSION='⭐'
   #   typeset -g POWERLEVEL9K_KUBECONTEXT_TEST_CONTENT_EXPANSION='> ${P9K_CONTENT} <'
   # Production contexts in red with a warning (same patterns as nvim: lua/kube/init.lua)
+  # first match wins: non-production names containing "prod" go first
   typeset -g POWERLEVEL9K_KUBECONTEXT_CLASSES=(
+      '*nonprod*'     DEFAULT
+      '*non-prod*'    DEFAULT
+      '*non_prod*'    DEFAULT
+      '*preprod*'     DEFAULT
       '*prod*'        PROD
       '*prd*'         PROD
-      '*production*'  PROD
       '*'             DEFAULT)
   typeset -g POWERLEVEL9K_KUBECONTEXT_DEFAULT_FOREGROUND=134
   typeset -g POWERLEVEL9K_KUBECONTEXT_PROD_FOREGROUND=196
